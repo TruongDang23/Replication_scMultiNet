@@ -44,18 +44,20 @@ def main():
     assert np.allclose(X1, X1.astype(int)), 'rna.X is not raw integer counts'
     assert np.allclose(X2, X2.astype(int)), 'atac.X is not raw integer counts'
 
-    Y = rna.obs[args.label_col].astype(str).to_numpy()
-    Celltypes = rna.obs[args.label_col].astype(str).to_numpy()
-    Genes = rna.var_names.to_numpy().astype(str)
-    GenesFromPeaks = atac.var_names.to_numpy().astype(str)
-    Barcodes = rna.obs_names.to_numpy().astype(str)
+    # dtype=object (not numpy's .astype(str), which yields fixed-width '<U'
+    # strings that h5py's variable-length string_dtype cannot write).
+    Y = rna.obs[args.label_col].astype(str).to_numpy(dtype=object)
+    Celltypes = rna.obs[args.label_col].astype(str).to_numpy(dtype=object)
+    Genes = rna.var_names.to_numpy().astype(object)
+    GenesFromPeaks = atac.var_names.to_numpy().astype(object)
+    Barcodes = rna.obs_names.to_numpy().astype(object)
 
     str_dtype = h5py.string_dtype(encoding='utf-8')
     print(f'Writing {args.out} ...')
     with h5py.File(args.out, 'w') as f:
         f.create_dataset('X1', data=X1, compression='gzip')
         f.create_dataset('X2', data=X2, compression='gzip')
-        f.create_dataset('Y', data=Y)
+        f.create_dataset('Y', data=Y, dtype=str_dtype)
         f.create_dataset('Celltypes', data=Celltypes, dtype=str_dtype)
         f.create_dataset('Genes', data=Genes, dtype=str_dtype)
         f.create_dataset('GenesFromPeaks', data=GenesFromPeaks, dtype=str_dtype)
