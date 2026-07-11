@@ -47,12 +47,12 @@ class BaseData:
             
     def get_labels(self):
         with h5py.File(self.datapath) as mat:
-            Y = np.array(mat['Y'])
+            Y = mat['Y'].asstr()[:] if h5py.check_string_dtype(mat['Y'].dtype) else np.array(mat['Y'])
         return Y
 
     def get_celltypes(self):
         with h5py.File(self.datapath) as mat:
-            cell_types = np.array(mat['Celltypes'])
+            cell_types = mat['Celltypes'].asstr()[:] if h5py.check_string_dtype(mat['Celltypes'].dtype) else np.array(mat['Celltypes'])
         return cell_types
 
     def get_genes(self, gene='Genes'):
