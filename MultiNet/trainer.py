@@ -277,11 +277,13 @@ class Trainer:
 
 
     @torch.no_grad()
-    def test_cluster(self):
+    def test_cluster(self, kmeans_seed=42):
         self.network_ae.eval()
         x = self.data.get_one_epoch_data(self.device)
         Y = self.data.get_labels()
         z = self.network_ae.get_common_latent_representation(x)
-        kmeans = KMeans(n_clusters=len(np.unique(Y)), n_init=20, random_state=42)
+        kmeans = KMeans(n_clusters=len(np.unique(Y)), n_init=20, random_state=kmeans_seed)
         y_pred = kmeans.fit_predict(z)
-        print('fusion: NMI= %.4f ARI= %.4f' % (eval_tools.clustering_metric(Y, y_pred)))
+        nmi, ari = eval_tools.clustering_metric(Y, y_pred)
+        print('fusion: NMI= %.4f ARI= %.4f' % (nmi, ari))
+        return nmi, ari

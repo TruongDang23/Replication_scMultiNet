@@ -1,4 +1,5 @@
 import os
+import csv
 import torch
 import random
 import argparse
@@ -51,6 +52,8 @@ parser.add_argument('-dl2', '--decodeLayer2', nargs='+', default=[64, 256])
 parser.add_argument('-disl1', '--discriminateLayer1', nargs='+', default=[256, 64, 32])
 parser.add_argument('-disl2', '--discriminateLayer2', nargs='+', default=[256, 64, 32])
 parser.add_argument('--seed', default=42, type=int)
+parser.add_argument('--kmeans_seed', default=42, type=int, help='random_state of the evaluation KMeans')
+parser.add_argument('--metrics_csv', default=None, type=str, help='Append NMI/ARI of this run to a CSV file')
 args = parser.parse_args()
 # print(args)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -109,5 +112,17 @@ if __name__ == "__main__":
         print("==> saving latent and pred...")
         trainer.save_latent(save_path=args.save_dir)
         print("==> Done")
-    trainer.test_cluster()
+    nmi, ari = trainer.test_cluster(kmeans_seed=args.kmeans_seed)
+
+    if args.metrics_csv is not None:
+        metrics_dir = os.path.dirname(args.metrics_csv)
+        if metrics_dir and not os.path.exists(metrics_dir):
+            os.makedirs(metrics_dir, exist_ok=True)
+        write_header = not os.path.exists(args.metrics_csv)
+        with open(args.metrics_csv, 'a', newline='') as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow(['dataset', 'seed', 'kmeans_seed', 'NMI', 'ARI'])
+            writer.writerow([Dataname, args.seed, args.kmeans_seed, '%.6f' % nmi, '%.6f' % ari])
+        print('==> metrics appended to %s' % args.metrics_csv)
 
