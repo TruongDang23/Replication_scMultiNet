@@ -10,6 +10,12 @@ from MultiNet.eval_tools import dropout
 
 class Multi_Omics(Dataset):
     def __init__(self, X1, X2, X1_indicator, X2_indicator):
+        # __len__ only reports x1's length, so a shorter x2 would silently
+        # de-align every row after the dropped cell. Fail loudly instead.
+        assert X1.shape[0] == X2.shape[0], (
+            'Cell count mismatch between the two modalities: '
+            'X1=%d vs X2=%d. Normalization drops all-zero cells per modality, '
+            'so they must be re-synchronised first.' % (X1.shape[0], X2.shape[0]))
         self.x1 = X1
         self.x2 = X2
         self.x1_indicator = X1_indicator
@@ -36,24 +42,34 @@ class BaseData:
         self.adata1 = None
         self.adata2 = None
         self.n_vars_list = None
+        # Row indices (into the raw h5 matrices) that survived normalization in
+        # BOTH modalities. Used to keep Y/Celltypes aligned with adata1/adata2.
+        self.kept_cells = None
         if preprocess:
             filter1, filter2, f1, f2 = configs[f'{Dataname}_Params']["data_preprocess"]
             x1, x2, self.importantGenes, self.importantFeatures = self.select(x1, x2, filter1, filter2, f1, f2)
-            self.adata1, self.adata2, self.n_vars_list = self.data_normalize(x1, x2)
+            self.adata1, self.adata2, self.n_vars_list, self.kept_cells = self.data_normalize(x1, x2)
         else:
             print('Warning! Your data has not been pre-processed!\nSaving Raw data to (x1, x2)...')
             self.x1 = x1
             self.x2 = x2
             
+    def _align_cells(self, arr):
+        """Subset a per-cell array read from the raw h5 down to the cells that
+        survived normalization, so it stays row-aligned with adata1/adata2."""
+        if self.kept_cells is None or len(arr) == len(self.kept_cells):
+            return arr
+        return arr[self.kept_cells]
+
     def get_labels(self):
         with h5py.File(self.datapath) as mat:
             Y = mat['Y'].asstr()[:] if h5py.check_string_dtype(mat['Y'].dtype) else np.array(mat['Y'])
-        return Y
+        return self._align_cells(Y)
 
     def get_celltypes(self):
         with h5py.File(self.datapath) as mat:
             cell_types = mat['Celltypes'].asstr()[:] if h5py.check_string_dtype(mat['Celltypes'].dtype) else np.array(mat['Celltypes'])
-        return cell_types
+        return self._align_cells(cell_types)
 
     def get_genes(self, gene='Genes'):
         with h5py.File(self.datapath) as mat:
@@ -99,36 +115,52 @@ class BaseData:
         return x1, x2, importantGenes, importantFeatures
 
     @staticmethod
-    def data_normalize(x1, x2):
-        adata1 = sc.AnnData(x1.astype(np.float32))
-        adata1 = read_dataset(adata1,
-                              transpose=False,
-                              test_split=False,
-                              copy=True,
-                              fname='genes')
-        adata1 = normalize(adata1,
-                           filter_min_counts=True,
-                           size_factors=True,
-                           normalize_input=False,
-                           logtrans_input=True)
-        adata1 = BaseData.make_indicators(adata1)
+    def _to_normalized_adata(x, fname):
+        adata = sc.AnnData(x.astype(np.float32))
+        # Tag every cell with its raw row index so it can be traced back after
+        # normalize() drops cells in-place.
+        adata.obs_names = np.arange(adata.n_obs).astype(str)
+        adata = read_dataset(adata,
+                             transpose=False,
+                             test_split=False,
+                             copy=True,
+                             fname=fname)
+        adata = normalize(adata,
+                          filter_min_counts=True,
+                          size_factors=True,
+                          normalize_input=False,
+                          logtrans_input=True)
+        return adata
 
-        adata2 = sc.AnnData(x2.astype(np.float32))
-        adata2 = read_dataset(adata2,
-                              transpose=False,
-                              test_split=False,
-                              copy=True,
-                              fname='proteins/peaks')
-        adata2 = normalize(adata2,
-                           filter_min_counts=True,
-                           size_factors=True,
-                           normalize_input=False,
-                           logtrans_input=True)
+    @staticmethod
+    def data_normalize(x1, x2):
+        n_raw = x1.shape[0]
+        assert x2.shape[0] == n_raw, \
+            'Raw X1 has %d cells but X2 has %d; the two modalities must be paired 1:1.' \
+            % (n_raw, x2.shape[0])
+
+        adata1 = BaseData._to_normalized_adata(x1, 'genes')
+        adata2 = BaseData._to_normalized_adata(x2, 'proteins/peaks')
+
+        # normalize() -> sc.pp.normalize_per_cell() drops cells whose total count
+        # falls below its min_counts threshold. It runs per modality, so a cell can
+        # be dropped from X2 but kept in X1, shifting every later row out of
+        # alignment. Re-synchronise on the raw row index (no-op when nothing dropped).
+        idx1 = adata1.obs_names.to_numpy().astype(np.int64)
+        idx2 = adata2.obs_names.to_numpy().astype(np.int64)
+        kept_cells = np.intersect1d(idx1, idx2)  # sorted -> original row order
+        if len(kept_cells) != n_raw:
+            print('==> Cell sync after log-normalize: raw=%d, X1=%d, X2=%d -> %d common (%d dropped)'
+                  % (n_raw, len(idx1), len(idx2), len(kept_cells), n_raw - len(kept_cells)))
+            adata1 = adata1[np.isin(idx1, kept_cells)].copy()
+            adata2 = adata2[np.isin(idx2, kept_cells)].copy()
+
+        adata1 = BaseData.make_indicators(adata1)
         adata2 = BaseData.make_indicators(adata2)
 
         input_size = [adata1.n_vars, adata2.n_vars]
 
-        return adata1, adata2, input_size
+        return adata1, adata2, input_size, kept_cells
 
     @staticmethod
     def get_datapath(dataset, datapath):
@@ -185,7 +217,7 @@ class SingleCellMultiOmicsData(BaseData):
         self.x1 = self.x1[:, importantGenes]
         self.x2 = self.x2[:, importantFeatures]
         self.importantGenes, self.importantFeatures = importantGenes, importantFeatures
-        self.adata1, self.adata2, self.n_vars_list = self.data_normalize(self.x1, self.x2)
+        self.adata1, self.adata2, self.n_vars_list, self.kept_cells = self.data_normalize(self.x1, self.x2)
         self.make_dataset()
         print('Warning! Training dataset regenerated successfully!')
     
