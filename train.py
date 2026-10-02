@@ -54,6 +54,16 @@ parser.add_argument('-disl2', '--discriminateLayer2', nargs='+', default=[256, 6
 parser.add_argument('--seed', default=42, type=int)
 parser.add_argument('--kmeans_seed', default=42, type=int, help='random_state of the evaluation KMeans')
 parser.add_argument('--metrics_csv', default=None, type=str, help='Append NMI/ARI of this run to a CSV file')
+parser.add_argument('--export_npz', action='store_true', default=False,
+                    help='Save emb/cell_ids/y_true/y_pred of the evaluation KMeans to '
+                         '<npz_dir>/<npz_method>_<npz_dataset>.npz (UMAP comparison)')
+parser.add_argument('--npz_dir', default=None, type=str, help='Output dir of the .npz (default: --save_dir)')
+parser.add_argument('--npz_method', default='scMultiNet', type=str, help='Method name on the UMAP panel and in the file name')
+parser.add_argument('--npz_dataset', default=None, type=str, help='Dataset tag in the file name (default: --dataset)')
+parser.add_argument('--npz_rna_h5ad', default=None, type=str,
+                    help='Take cell_ids/y_true from obs_names/obs[--npz_label_col] of this RNA .h5ad '
+                         'instead of Barcodes/Y of the .h5')
+parser.add_argument('--npz_label_col', default='Group', type=str, help='obs column of --npz_rna_h5ad used as y_true')
 args = parser.parse_args()
 # print(args)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -112,7 +122,14 @@ if __name__ == "__main__":
         print("==> saving latent and pred...")
         trainer.save_latent(save_path=args.save_dir)
         print("==> Done")
-    nmi, ari = trainer.test_cluster(kmeans_seed=args.kmeans_seed)
+    nmi, ari, z, y_pred = trainer.test_cluster(kmeans_seed=args.kmeans_seed, return_outputs=True)
+
+    if args.export_npz:
+        npz_path = os.path.join(args.npz_dir or args.save_dir,
+                                '%s_%s.npz' % (args.npz_method, args.npz_dataset or Dataname))
+        trainer.export_npz(npz_path, z, y_pred, method=args.npz_method,
+                           rna_h5ad=args.npz_rna_h5ad, label_col=args.npz_label_col,
+                           dataset=Dataname, seed=args.seed, kmeans_seed=args.kmeans_seed)
 
     if args.metrics_csv is not None:
         metrics_dir = os.path.dirname(args.metrics_csv)

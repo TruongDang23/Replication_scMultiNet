@@ -71,6 +71,33 @@ class BaseData:
             cell_types = mat['Celltypes'].asstr()[:] if h5py.check_string_dtype(mat['Celltypes'].dtype) else np.array(mat['Celltypes'])
         return self._align_cells(cell_types)
 
+    def get_barcodes(self):
+        with h5py.File(self.datapath) as mat:
+            if 'Barcodes' not in mat:
+                raise KeyError("'%s' has no 'Barcodes' dataset: re-create it with preread_dataset.py "
+                               "or pass the RNA .h5ad it was converted from." % self.datapath)
+            barcodes = mat['Barcodes'].asstr()[:] if h5py.check_string_dtype(mat['Barcodes'].dtype) else np.array(mat['Barcodes'])
+        return self._align_cells(np.asarray(barcodes).astype(str))
+
+    def get_obs_from_h5ad(self, h5ad_path, label_col='Group'):
+        """Barcodes (obs_names) and labels (obs[label_col]) of the RNA .h5ad this .h5 was
+        converted from (preread_dataset.py keeps row order), aligned like get_labels()."""
+        adata = ad.read_h5ad(h5ad_path, backed='r')  # loads obs only, X stays on disk
+        try:
+            barcodes = adata.obs_names.to_numpy().astype(str)
+            labels = adata.obs[label_col].astype(str).to_numpy()
+        finally:
+            adata.file.close()
+        with h5py.File(self.datapath) as mat:
+            n_raw = mat['X1'].shape[0]
+            has_barcodes = 'Barcodes' in mat
+        assert len(barcodes) == n_raw, \
+            '%s has %d cells but %s has %d rows' % (h5ad_path, len(barcodes), self.datapath, n_raw)
+        barcodes, labels = self._align_cells(barcodes), self._align_cells(labels)
+        if has_barcodes and not np.array_equal(barcodes, self.get_barcodes()):
+            raise ValueError('Row order of %s differs from Barcodes of %s' % (h5ad_path, self.datapath))
+        return barcodes, labels
+
     def get_genes(self, gene='Genes'):
         with h5py.File(self.datapath) as mat:
             gene = np.array(mat[gene])

@@ -7,6 +7,7 @@ from torch import optim
 from torch.autograd import Variable
 from tqdm import tqdm
 from MultiNet.loss import crossview_contrastive_Loss, KLD_Loss
+from MultiNet.export import save_embedding
 from sklearn.cluster import KMeans
 
 
@@ -277,7 +278,7 @@ class Trainer:
 
 
     @torch.no_grad()
-    def test_cluster(self, kmeans_seed=42):
+    def test_cluster(self, kmeans_seed=42, return_outputs=False):
         self.network_ae.eval()
         x = self.data.get_one_epoch_data(self.device)
         Y = self.data.get_labels()
@@ -286,4 +287,29 @@ class Trainer:
         y_pred = kmeans.fit_predict(z)
         nmi, ari = eval_tools.clustering_metric(Y, y_pred)
         print('fusion: NMI= %.4f ARI= %.4f' % (nmi, ari))
+        if return_outputs:
+            return nmi, ari, z, y_pred
+        return nmi, ari
+
+    def export_npz(self, out_path, z, y_pred, method='scMultiNet', rna_h5ad=None, label_col='Group', **extra):
+        """Save z / y_pred of test_cluster(return_outputs=True) to the shared .npz contract
+        (MultiNet/export.py) used for the UMAP comparison with scMCC.
+
+        cell_ids / y_true come from Barcodes / Y of the .h5 by default, or from
+        obs_names / obs[label_col] of rna_h5ad when it is given."""
+        Y = self.data.get_labels().astype(str)
+        if rna_h5ad is None:
+            cell_ids, y_true = self.data.get_barcodes(), Y
+        else:
+            cell_ids, y_true = self.data.get_obs_from_h5ad(rna_h5ad, label_col)
+            if not np.array_equal(y_true, Y):
+                print("[WARN] obs['%s'] of %s differs from Y of the .h5 -> ARI/NMI in the .npz "
+                      "will differ from the ones printed by test_cluster" % (label_col, rna_h5ad))
+        nmi, ari = eval_tools.clustering_metric(y_true, y_pred)
+        out_dir = os.path.dirname(out_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        save_embedding(out_path, z, cell_ids, y_true, y_pred, method=method, ari=ari, nmi=nmi,
+                       emb_source='NetworkAE.get_common_latent_representation (joint attention fused latent)',
+                       checkpoint='final', **extra)
         return nmi, ari

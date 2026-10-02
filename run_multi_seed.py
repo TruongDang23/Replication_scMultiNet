@@ -46,6 +46,14 @@ def build_parser():
                         help='Also enable torch.use_deterministic_algorithms(True)')
     parser.add_argument('--save_latent', action='store_true', default=False,
                         help='Save latent + KMeans prediction of every seed')
+    parser.add_argument('--export_npz', action='store_true', default=False,
+                        help='Save <out_dir>/seed_<s>/<npz_method>_<npz_dataset>.npz of every seed (UMAP comparison)')
+    parser.add_argument('--npz_method', default='scMultiNet', type=str)
+    parser.add_argument('--npz_dataset', default=None, type=str, help='Dataset tag in the file name (default: --dataset)')
+    parser.add_argument('--npz_rna_h5ad', default=None, type=str,
+                        help='Take cell_ids/y_true from obs_names/obs[--npz_label_col] of this RNA .h5ad '
+                             'instead of Barcodes/Y of the .h5')
+    parser.add_argument('--npz_label_col', default='Group', type=str)
 
     # --- same knobs as train.py ---
     parser.add_argument('--dataset', default='BMNC', help='Name of Dataset')
@@ -151,14 +159,19 @@ def main():
         trainer.train(configs)
         elapsed = time.time() - t0
 
-        nmi, ari = trainer.test_cluster(kmeans_seed=kmeans_seed)
+        nmi, ari, z, y_pred = trainer.test_cluster(kmeans_seed=kmeans_seed, return_outputs=True)
         rows.append({'dataset': args.dataset, 'seed': seed, 'kmeans_seed': kmeans_seed,
                      'NMI': nmi, 'ARI': ari, 'train_seconds': round(elapsed, 1)})
 
+        seed_dir = os.path.join(args.out_dir, 'seed_%d' % seed)
         if args.save_latent:
-            seed_dir = os.path.join(args.out_dir, 'seed_%d' % seed)
             os.makedirs(seed_dir, exist_ok=True)
             trainer.save_latent(save_path=seed_dir)
+        if args.export_npz:
+            npz_path = os.path.join(seed_dir, '%s_%s.npz' % (args.npz_method, args.npz_dataset or args.dataset))
+            trainer.export_npz(npz_path, z, y_pred, method=args.npz_method,
+                               rna_h5ad=args.npz_rna_h5ad, label_col=args.npz_label_col,
+                               dataset=args.dataset, seed=seed, kmeans_seed=kmeans_seed)
 
         del trainer, multinet
         if device.type == 'cuda':
