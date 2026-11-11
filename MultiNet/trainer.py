@@ -7,7 +7,7 @@ from torch import optim
 from torch.autograd import Variable
 from tqdm import tqdm
 from MultiNet.loss import crossview_contrastive_Loss, KLD_Loss
-from MultiNet.export import save_embedding
+from MultiNet.export import save_embedding, save_cluster_csv
 from sklearn.cluster import KMeans
 
 
@@ -312,4 +312,10 @@ class Trainer:
         save_embedding(out_path, z, cell_ids, y_true, y_pred, method=method, ari=ari, nmi=nmi,
                        emb_source='NetworkAE.get_common_latent_representation (joint attention fused latent)',
                        checkpoint='final', **extra)
+
+        save_cluster_csv(
+            out_path = '/content/output/scMultiNet_PBMC_clusters.csv',
+            cell_ids = cell_ids,
+            y_pred   = y_pred
+        )
         return nmi, ari

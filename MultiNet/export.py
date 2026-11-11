@@ -47,6 +47,34 @@ def save_embedding(out_path, emb, cell_ids, y_true, y_pred,
           f"ARI={ari}  NMI={nmi}")
 
 
+def save_cluster_csv(out_path, cell_ids, y_pred, label_col='predicted_cell_type'):
+    """Ghi CSV 2 cột: barcode | predicted_cell_type (= chỉ số cụm 0..K-1).
+
+    `cell_ids` và `y_pred` phải cùng thứ tự — tức thứ tự của loader.dataset
+    (encodeBatch duyệt shuffle=False), chính là thứ tự `rna.obs_names` trong main.
+    """
+    import pandas as pd
+
+    cell_ids = np.asarray(cell_ids).astype(str)
+    y_pred = np.asarray(y_pred).astype(int)
+    if len(cell_ids) != len(y_pred):
+        raise ValueError(f"cell_ids ({len(cell_ids)}) và y_pred ({len(y_pred)}) "
+                         f"lệch độ dài — thứ tự tế bào không khớp.")
+    if len(np.unique(cell_ids)) != len(cell_ids):
+        raise ValueError("Barcode bị trùng — không định danh được từng tế bào.")
+
+    df = pd.DataFrame({'barcode': cell_ids, label_col: y_pred})
+    df.to_csv(out_path, index=False)
+    print(f"[export] {out_path}  cells={len(df)}  n_clusters={df[label_col].nunique()}")
+    return df
+
+
+def csv_from_npz(npz_path, out_path):
+    """Xuất CSV từ file .npz đã có (không cần train lại)."""
+    d = load_embedding(npz_path)
+    return save_cluster_csv(out_path, d['cell_ids'], d['y_pred'])
+
+
 def load_embedding(path):
     """Đọc ngược file .npz -> dict, ép kiểu về str/float cho tiện dùng."""
     d = np.load(path, allow_pickle=True)
@@ -84,3 +112,8 @@ def npz_from_csv(csv_path, out_path, method, y_true=None, cell_id_col=None,
 
     save_embedding(out_path, df.to_numpy(), df.index.to_numpy().astype(str),
                    labels, y_pred, method=method, ari=ari, nmi=nmi)
+
+if __name__ == "__main__":
+    # python -m scMCC.export output/scMCC_PBMC.npz output/scMCC_PBMC_clusters.csv
+    import sys
+    csv_from_npz(sys.argv[1], sys.argv[2])
